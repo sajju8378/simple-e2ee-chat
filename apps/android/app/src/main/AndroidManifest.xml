@@ -5,7 +5,7 @@
         android:allowBackup="false"
         android:label="Simple E2EE Chat"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Material3.DayNight.NoActionBar">
+        android:theme="@style/Theme.SimpleE2EEChat">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
