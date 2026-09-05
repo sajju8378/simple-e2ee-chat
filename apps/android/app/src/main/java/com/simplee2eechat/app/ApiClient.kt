@@ -7,13 +7,19 @@ import java.net.URL
 import java.nio.charset.StandardCharsets
 
 class ApiClient(private val baseUrl: String, private val token: String) {
-    data class User(val id: String, val publicKey: String)
+    data class User(val id: String, val displayName: String, val publicKey: String)
     data class Message(val id: String, val from: String, val to: String, val envelope: Map<String, Any?>, val createdAt: String)
     data class AuthResult(val id: String, val token: String, val publicKey: String)
 
+    fun health(): JSONObject = request("GET", "/health", null)
+
     fun getUser(id: String): User {
         val json = request("GET", "/v1/users/${id.uppercase()}", null)
-        return User(json.getString("id"), json.getString("publicKey"))
+        return User(
+            json.getString("id"),
+            json.optString("displayName", "Friend"),
+            json.getString("publicKey")
+        )
     }
 
     fun sendMessage(to: String, from: String, envelope: Map<String, Any>): String {
@@ -61,7 +67,7 @@ class ApiClient(private val baseUrl: String, private val token: String) {
         connection.connectTimeout = 15000
         connection.readTimeout = 15000
         connection.setRequestProperty("Accept", "application/json")
-        connection.setRequestProperty("Authorization", "Bearer $token")
+        if (token.isNotBlank()) connection.setRequestProperty("Authorization", "Bearer $token")
         if (body != null) {
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/json")
@@ -70,6 +76,7 @@ class ApiClient(private val baseUrl: String, private val token: String) {
         val code = connection.responseCode
         val stream = if (code in 200..299) connection.inputStream else connection.errorStream
         val text = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
+        connection.disconnect()
         if (code !in 200..299) {
             throw IllegalStateException(JSONObject(text).optString("error", "Server error ($code)"))
         }
@@ -77,6 +84,8 @@ class ApiClient(private val baseUrl: String, private val token: String) {
     }
 
     companion object {
+        fun health(base: String): JSONObject = requestStatic(base, "GET", "/health", null)
+
         fun register(base: String, name: String, password: String, publicKey: String): AuthResult {
             val body = JSONObject()
                 .put("displayName", name)
@@ -94,17 +103,20 @@ class ApiClient(private val baseUrl: String, private val token: String) {
             return AuthResult(json.getString("id"), json.getString("token"), json.getString("publicKey"))
         }
 
-        private fun requestStatic(base: String, method: String, path: String, body: JSONObject): JSONObject {
+        private fun requestStatic(base: String, method: String, path: String, body: JSONObject?): JSONObject {
             val connection = URL(base.trimEnd('/') + path).openConnection() as HttpURLConnection
             connection.requestMethod = method
             connection.connectTimeout = 15000
             connection.readTimeout = 15000
-            connection.doOutput = true
-            connection.setRequestProperty("Content-Type", "application/json")
-            connection.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
+            if (body != null) {
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
+            }
             val code = connection.responseCode
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
+            connection.disconnect()
             if (code !in 200..299) {
                 throw IllegalStateException(JSONObject(text).optString("error", "Server error ($code)"))
             }
