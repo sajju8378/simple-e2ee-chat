@@ -3,7 +3,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:allowBackup="false"
-        android:usesCleartextTraffic="true"
+        android:usesCleartextTraffic="false"
         android:label="Simple E2EE Chat"
         android:supportsRtl="true"
         android:theme="@style/Theme.SimpleE2EEChat">
