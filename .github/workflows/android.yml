@@ -8,12 +8,36 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/android
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: server
+        run: npm install
+
+      - name: Backend health smoke test
+        working-directory: server
+        run: |
+          node src/server.js > /tmp/simple-e2ee-server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID || true' EXIT
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8080/health; then
+              echo
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/simple-e2ee-server.log
+          exit 1
 
       - name: Set up JDK
         uses: actions/setup-java@v4
@@ -33,6 +57,7 @@ jobs:
           gradle-version: '8.13'
 
       - name: Build debug APK
+        working-directory: apps/android
         run: gradle :app:assembleDebug --no-daemon
 
       - name: Upload APK
