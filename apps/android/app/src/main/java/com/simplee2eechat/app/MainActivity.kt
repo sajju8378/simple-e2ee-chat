@@ -22,10 +22,16 @@ class MainActivity : AppCompatActivity() {
     private var poll = false
     private val sentPlaintext = mutableMapOf<String, String>()
 
+    companion object {
+        // Public HTTPS backend used by the installable build. The server URL remains
+        // editable on the login screen for local/LAN development.
+        private const val DEFAULT_SERVER = "https://simple-e2ee-chat-api-sajju8378.onrender.com"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = SecureStore(this)
-        val savedUrl = getPreferences(Context.MODE_PRIVATE).getString("server", "http://10.0.2.2:8080") ?: "http://10.0.2.2:8080"
+        val savedUrl = getPreferences(Context.MODE_PRIVATE).getString("server", DEFAULT_SERVER) ?: DEFAULT_SERVER
         val token = store.token(); val id = store.userId()
         if (!token.isNullOrBlank() && !id.isNullOrBlank()) { api = ApiClient(savedUrl, token); showChat(id) } else showAuth(savedUrl)
     }
@@ -51,11 +57,12 @@ class MainActivity : AppCompatActivity() {
         root.addView(url); root.addView(id); root.addView(password); root.addView(display)
         val login = Button(this).apply { text = "Log in" }; val signup = Button(this).apply { text = "Create new account" }
         root.addView(login); root.addView(signup)
-        val note = TextView(this).apply { text = "Your private key stays on this phone. The server stores only your public key and encrypted message envelopes."; setPadding(0,24,0,0) }
+        val note = TextView(this).apply { text = "Messages are encrypted on this phone before they are sent. The server receives encrypted message envelopes."; setPadding(0,24,0,0) }
         root.addView(note); setContentView(root)
         fun busy(b:Boolean){ login.isEnabled=!b; signup.isEnabled=!b }
         login.setOnClickListener {
             val base=url.text.toString().trim().trimEnd('/'); val uid=id.text.toString().trim().uppercase(); val pw=password.text.toString()
+            if(!base.startsWith("https://") && !base.startsWith("http://")){toast("Enter a valid server URL");return@setOnClickListener}
             if(uid.isBlank()||pw.length<8){toast("Enter your ID and an 8+ character password");return@setOnClickListener}
             saveServer(base); busy(true); note.text="Logging in securely…"
             executor.execute { try {
@@ -65,6 +72,7 @@ class MainActivity : AppCompatActivity() {
         }
         signup.setOnClickListener {
             val base=url.text.toString().trim().trimEnd('/'); val name=display.text.toString().trim(); val pw=password.text.toString()
+            if(!base.startsWith("https://") && !base.startsWith("http://")){toast("Enter a valid server URL");return@setOnClickListener}
             if(name.isBlank()||pw.length<8){toast("Enter a display name and an 8+ character password");return@setOnClickListener}
             saveServer(base); busy(true); note.text="Creating encrypted identity…"
             executor.execute { try {
@@ -107,10 +115,9 @@ class MainActivity : AppCompatActivity() {
             val text=if(m.from==myId)sentPlaintext[m.id]?:"[Sent encrypted message]" else try{Crypto.decrypt(m.envelope,store.privateKeyBlob()?:error("private key missing"))}catch(_:Exception){"[Unable to decrypt message]"}
             "${m.createdAt.take(19).replace('T',' ')}  $sender: $text"
         };main.post{renderMessages(out);status.text=if(out.isEmpty())"No messages yet." else "End-to-end encrypted conversation"}}catch(e:Exception){main.post{status.text=e.message?:"Unable to fetch messages"}};main.postDelayed({loadMessages(myId)},3000)}
-    }
     private fun renderMessages(lines:List<String>){messagesBox.removeAllViews();for(line in lines.takeLast(100))messagesBox.addView(TextView(this).apply{text=line;textSize=16f;setPadding(10,10,10,10)})}
     private fun saveServer(url:String){getPreferences(Context.MODE_PRIVATE).edit().putString("server",url).apply()}
-    private fun getServerUrl()=getPreferences(Context.MODE_PRIVATE).getString("server","http://10.0.2.2:8080")?:"http://10.0.2.2:8080"
+    private fun getServerUrl()=getPreferences(Context.MODE_PRIVATE).getString("server",DEFAULT_SERVER)?:DEFAULT_SERVER
     private fun toast(s:String)=Toast.makeText(this,s,Toast.LENGTH_SHORT).show()
     override fun onDestroy(){poll=false;executor.shutdownNow();super.onDestroy()}
 }
