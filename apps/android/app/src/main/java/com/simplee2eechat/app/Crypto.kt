@@ -14,26 +14,58 @@ import kotlin.random.Random
 
 object Crypto {
     data class Generated(val publicKey: String, val privateKey: String)
+
     fun generateKeyPair(): Generated {
-        val g=KeyPairGenerator.getInstance("RSA");g.initialize(2048);val kp=g.generateKeyPair()
-        return Generated(enc(kp.public.encoded),enc(kp.private.encoded))
+        val generator = KeyPairGenerator.getInstance("RSA")
+        generator.initialize(2048)
+        val pair = generator.generateKeyPair()
+        return Generated(encode(pair.public.encoded), encode(pair.private.encoded))
     }
-    fun passwordHash(password:String):String=enc(MessageDigest.getInstance("SHA-256").digest(password.toByteArray(StandardCharsets.UTF_8)))
-    fun encrypt(plain:String,recipientPublicKey:String):Map<String,Any>{
-        val aes=ByteArray(32).also{Random.nextBytes(it)};val iv=ByteArray(12).also{Random.nextBytes(it)}
-        val g=Cipher.getInstance("AES/GCM/NoPadding");g.init(Cipher.ENCRYPT_MODE,SecretKeySpec(aes,"AES"),GCMParameterSpec(128,iv))
-        val ciphertext=g.doFinal(plain.toByteArray(StandardCharsets.UTF_8))
-        val r=Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");r.init(Cipher.ENCRYPT_MODE,publicKey(recipientPublicKey))
-        return mapOf("v" to 1,"alg" to "RSA-OAEP-256/AES-256-GCM","key" to enc(r.doFinal(aes)),"iv" to enc(iv),"ciphertext" to enc(ciphertext))
+
+    fun passwordHash(password: String): String = encode(
+        MessageDigest.getInstance("SHA-256").digest(password.toByteArray(StandardCharsets.UTF_8))
+    )
+
+    fun encrypt(plain: String, recipientPublicKey: String): Map<String, Any> {
+        val aes = ByteArray(32).also { Random.nextBytes(it) }
+        val iv = ByteArray(12).also { Random.nextBytes(it) }
+        val gcm = Cipher.getInstance("AES/GCM/NoPadding")
+        gcm.init(Cipher.ENCRYPT_MODE, SecretKeySpec(aes, "AES"), GCMParameterSpec(128, iv))
+        val ciphertext = gcm.doFinal(plain.toByteArray(StandardCharsets.UTF_8))
+
+        val rsa = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding")
+        rsa.init(Cipher.ENCRYPT_MODE, decodePublicKey(recipientPublicKey))
+        val wrappedKey = rsa.doFinal(aes)
+
+        return mapOf(
+            "v" to 1,
+            "alg" to "RSA-OAEP-256/AES-256-GCM",
+            "key" to encode(wrappedKey),
+            "iv" to encode(iv),
+            "ciphertext" to encode(ciphertext)
+        )
     }
-    fun decrypt(envelope:Map<String,Any?>,privateKey:String):String{
-        val r=Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");r.init(Cipher.DECRYPT_MODE,privateKey(privateKey))
-        val aes=r.doFinal(dec(envelope["key"].toString()));val g=Cipher.getInstance("AES/GCM/NoPadding")
-        g.init(Cipher.DECRYPT_MODE,SecretKeySpec(aes,"AES"),GCMParameterSpec(128,dec(envelope["iv"].toString())))
-        return String(g.doFinal(dec(envelope["ciphertext"].toString())),StandardCharsets.UTF_8)
+
+    fun decrypt(envelope: Map<String, Any?>, privateKey: String): String {
+        val rsa = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding")
+        rsa.init(Cipher.DECRYPT_MODE, decodePrivateKey(privateKey))
+        val aes = rsa.doFinal(decode(envelope["key"].toString()))
+
+        val gcm = Cipher.getInstance("AES/GCM/NoPadding")
+        gcm.init(
+            Cipher.DECRYPT_MODE,
+            SecretKeySpec(aes, "AES"),
+            GCMParameterSpec(128, decode(envelope["iv"].toString()))
+        )
+        return String(gcm.doFinal(decode(envelope["ciphertext"].toString())), StandardCharsets.UTF_8)
     }
-    private fun public(s:String)=KeyFactory.getInstance("RSA").generatePublic(X509EncodedKeySpec(dec(s)))
-    private fun privateKey(s:String)=KeyFactory.getInstance("RSA").generatePrivate(PKCS8EncodedKeySpec(dec(s)))
-    private fun enc(b:ByteArray)=Base64.encodeToString(b,Base64.NO_WRAP)
-    private fun dec(s:String)=Base64.decode(s,Base64.DEFAULT)
+
+    private fun decodePublicKey(value: String) = KeyFactory.getInstance("RSA")
+        .generatePublic(X509EncodedKeySpec(decode(value)))
+
+    private fun decodePrivateKey(value: String) = KeyFactory.getInstance("RSA")
+        .generatePrivate(PKCS8EncodedKeySpec(decode(value)))
+
+    private fun encode(bytes: ByteArray) = Base64.encodeToString(bytes, Base64.NO_WRAP)
+    private fun decode(value: String) = Base64.decode(value, Base64.DEFAULT)
 }
