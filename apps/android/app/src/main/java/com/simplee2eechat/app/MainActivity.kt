@@ -26,7 +26,7 @@ class MainActivity : AppCompatActivity() {
     private val sentPlaintext = mutableMapOf<String, String>()
 
     companion object {
-        private const val DEFAULT_SERVER = "https://simple-e2ee-chat-api-sajju8378.onrender.com"
+        private const val DEFAULT_SERVER = "https://simple-e2ee-chat.onrender.com"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
