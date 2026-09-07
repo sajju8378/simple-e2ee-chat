@@ -1,5 +1,7 @@
 package com.simplee2eechat.app
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
@@ -32,7 +34,7 @@ class MainActivity : AppCompatActivity() {
     private val sentPlaintext = mutableMapOf<String, String>()
 
     companion object {
-        private const val DEFAULT_SERVER = "https://simple-e2ee-chat.onrender.com"
+        private const val DEFAULT_SERVER = "https://simple-e2ee-chat-api-sajju8378.onrender.com"
         private const val PREFS = "e2ee_ui"
         private const val CONTACTS = "contacts"
         private const val BG = 0xFFF7F9FC.toInt()
@@ -130,7 +132,6 @@ class MainActivity : AppCompatActivity() {
         r.setPadding(dp(24), dp(40), dp(24), dp(18))
         r.addView(text("Simple E2EE Chat", 30f, TEXT, true), LinearLayout.LayoutParams(-1, -2))
         r.addView(text("Private one-to-one messaging", 16f, MUTED).apply { gravity = Gravity.CENTER; setPadding(0, dp(7), 0, dp(28)) })
-
         val id = edit("Messenger ID  •  E2E-XXXXXXXX").apply { setText(prefilledId) }
         val password = edit("Password", true).apply { setText(store.password().orEmpty()) }
         r.addView(id, LinearLayout.LayoutParams(-1, dp(56)).apply { bottomMargin = dp(12) })
@@ -140,8 +141,7 @@ class MainActivity : AppCompatActivity() {
         val login = button("Log in", true)
         r.addView(login, LinearLayout.LayoutParams(-1, dp(52)))
         r.addView(spacer(10))
-        r.addView(text("Server: simple-e2ee-chat.onrender.com", 13f, MUTED).apply { gravity = Gravity.CENTER })
-
+        r.addView(text("Server: simple-e2ee-chat-api-sajju8378.onrender.com", 13f, MUTED).apply { gravity = Gravity.CENTER })
         val bottom = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
         bottom.addView(spacer(14))
         bottom.addView(text("New to Simple E2EE Chat?", 14f, MUTED).apply { gravity = Gravity.CENTER })
@@ -270,7 +270,6 @@ class MainActivity : AppCompatActivity() {
         top.addView(titleBox, LinearLayout.LayoutParams(0, -2, 1f))
         val me = button("My ID"); me.setTextSize(12f); me.setOnClickListener { showIdentityCard(myId, myName) }
         top.addView(me, LinearLayout.LayoutParams(dp(74), dp(44))); r.addView(top)
-
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(10), dp(12), dp(10)) }
         val scroll = ScrollView(this).apply { addView(list) }; r.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         val contactsNow = contacts()
@@ -280,7 +279,6 @@ class MainActivity : AppCompatActivity() {
             empty.addView(text("Start a new chat with your friend's Messenger ID.", 15f, MUTED).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(18)) })
             list.addView(empty)
         } else contactsNow.forEach { addChatRow(list, it) }
-
         val bottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(14), dp(12)); setBackgroundColor(Color.WHITE) }
         val newChat = button("＋  New chat", true); val logout = button("Log out")
         bottom.addView(newChat, LinearLayout.LayoutParams(0, dp(52), 1f).apply { rightMargin = dp(8) }); bottom.addView(logout, LinearLayout.LayoutParams(dp(92), dp(52)))
@@ -339,23 +337,27 @@ class MainActivity : AppCompatActivity() {
         val avatar = TextView(this).apply { text = name.take(1).uppercase(Locale.getDefault()); textSize = 18f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD; background = rounded(PRIMARY, 50) }
         top.addView(avatar, LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(5); rightMargin = dp(10) })
         val head = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }; head.addView(text(name, 18f, TEXT, true)); head.addView(text(peer, 11f, MUTED).apply { setPadding(0, dp(2), 0, 0) }); top.addView(head, LinearLayout.LayoutParams(0, -2, 1f)); r.addView(top)
-
         messagesBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(12), dp(12), dp(8)) }
         val scroll = ScrollView(this).apply { addView(messagesBox); isFillViewport = true }; r.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         chatStatus = text("End-to-end encrypted", 11f, MUTED).apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, dp(5)) }; r.addView(chatStatus)
         val compose = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), dp(8), dp(10), dp(12)); setBackgroundColor(Color.WHITE) }
         messageInput = edit("Message"); messageInput.background = rounded(0xFFF1F4F8.toInt(), 24); val send = button("Send", true)
         compose.addView(messageInput, LinearLayout.LayoutParams(0, dp(52), 1f).apply { rightMargin = dp(8) }); compose.addView(send, LinearLayout.LayoutParams(dp(82), dp(52))); r.addView(compose); setContentView(r)
-
         back.setOnClickListener { poll = false; showChatList(myId, store.displayName().orEmpty()) }
         send.setOnClickListener {
             val body = messageInput.text.toString().trim(); if (body.isBlank() || currentPeer.isBlank()) return@setOnClickListener
             send.isEnabled = false; chatStatus.text = "Encrypting and sending…"
             executor.execute {
                 try {
-                    val client = api ?: error("Not logged in"); val recipient = client.getUser(currentPeer); val envelope = Crypto.encrypt(body, recipient.publicKey); val messageId = client.sendMessage(currentPeer, myId, envelope); sentPlaintext[messageId] = body
+                    val client = api ?: error("Not logged in")
+                    val recipient = client.getUser(currentPeer)
+                    val envelope = Crypto.encrypt(body, recipient.publicKey)
+                    val messageId = client.sendMessage(currentPeer, myId, envelope)
+                    sentPlaintext[messageId] = body
                     main.post { messageInput.setText(""); chatStatus.text = "End-to-end encrypted"; send.isEnabled = true; loadMessages(myId, scroll) }
-                } catch (e: Exception) { main.post { send.isEnabled = true; chatStatus.text = e.message ?: "Send failed" } }
+                } catch (e: Exception) {
+                    main.post { send.isEnabled = true; chatStatus.text = e.message ?: "Send failed" }
+                }
             }
         }
         loadMessages(myId, scroll)
@@ -368,33 +370,72 @@ class MainActivity : AppCompatActivity() {
                 val list = api?.conversation(currentPeer).orEmpty()
                 val rows = list.map { m ->
                     val mine = m.from == myId
-                    val body = if (mine) sentPlaintext[m.id] ?: "[Sent message]" else try { Crypto.decrypt(m.envelope, store.privateKeyBlob() ?: error("private key missing")) } catch (_: Exception) { "[Unable to decrypt]" }
+                    val body = if (mine) sentPlaintext[m.id] ?: "[Sent message]" else try {
+                        Crypto.decrypt(m.envelope, store.privateKeyBlob() ?: error("private key missing"))
+                    } catch (_: Exception) {
+                        "[Unable to decrypt]"
+                    }
                     Triple(mine, body, formatTime(m.createdAt))
                 }
-                main.post { renderMessages(rows); chatStatus.text = if (rows.isEmpty()) "End-to-end encrypted • no messages yet" else "End-to-end encrypted"; scroll.post { scroll.fullScroll(View.FOCUS_DOWN) } }
-            } catch (e: Exception) { main.post { chatStatus.text = e.message ?: "Unable to load messages" } }
+                main.post {
+                    renderMessages(rows)
+                    chatStatus.text = if (rows.isEmpty()) "End-to-end encrypted • no messages yet" else "End-to-end encrypted"
+                    scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+                }
+            } catch (e: Exception) {
+                main.post { chatStatus.text = e.message ?: "Unable to load messages" }
+            }
             main.postDelayed({ loadMessages(myId, scroll) }, 3000)
         }
     }
 
     private fun renderMessages(rows: List<Triple<Boolean, String, String>>) {
         messagesBox.removeAllViews()
-        if (rows.isEmpty()) { messagesBox.addView(text("Messages are encrypted on your device before they are sent.", 13f, MUTED).apply { gravity = Gravity.CENTER; setPadding(dp(28), dp(40), dp(28), dp(40) }); return }
+        if (rows.isEmpty()) {
+            val empty = text("Messages are encrypted on your device before they are sent.", 13f, MUTED)
+            empty.gravity = Gravity.CENTER
+            empty.setPadding(dp(28), dp(40), dp(28), dp(40))
+            messagesBox.addView(empty)
+            return
+        }
         rows.takeLast(100).forEach { (mine, body, time) ->
-            val line = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = if (mine) Gravity.END else Gravity.START }
-            val bubble = TextView(this).apply { text = body; textSize = 16f; setTextColor(if (mine) Color.WHITE else TEXT); setPadding(dp(14), dp(10), dp(14), dp(4)); background = rounded(if (mine) PRIMARY else Color.WHITE, 18, if (mine) 0 else 0xFFE0E5EC.toInt()) }
-            line.addView(bubble, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(36); rightMargin = dp(36); bottomMargin = dp(2) })
-            line.addView(text(time, 10f, MUTED).apply { setPadding(dp(8), 0, dp(8), dp(8)) }); messagesBox.addView(line, LinearLayout.LayoutParams(-1, -2))
+            val line = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = if (mine) Gravity.END else Gravity.START
+            }
+            val bubble = TextView(this).apply {
+                text = body
+                textSize = 16f
+                setTextColor(if (mine) Color.WHITE else TEXT)
+                setPadding(dp(14), dp(10), dp(14), dp(4))
+                background = rounded(if (mine) PRIMARY else Color.WHITE, 18, if (mine) 0 else 0xFFE0E5EC.toInt())
+            }
+            val bubbleParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            bubbleParams.leftMargin = dp(36)
+            bubbleParams.rightMargin = dp(36)
+            bubbleParams.bottomMargin = dp(2)
+            line.addView(bubble, bubbleParams)
+            val timeView = text(time, 10f, MUTED)
+            timeView.setPadding(dp(8), 0, dp(8), dp(8))
+            line.addView(timeView)
+            messagesBox.addView(line, LinearLayout.LayoutParams(-1, -2))
         }
     }
 
     private fun formatTime(value: String): String = try {
-        val input = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US); val date: Date = input.parse(value.take(19)) ?: return value.take(16).replace('T', ' '); SimpleDateFormat("HH:mm", Locale.getDefault()).format(date)
-    } catch (_: Exception) { value.take(16).replace('T', ' ') }
+        val input = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+        val date: Date = input.parse(value.take(19)) ?: return value.take(16).replace('T', ' ')
+        SimpleDateFormat("HH:mm", Locale.getDefault()).format(date)
+    } catch (_: Exception) {
+        value.take(16).replace('T', ' ')
+    }
 
-    private fun saveServer(url: String) { getPreferences(Context.MODE_PRIVATE).edit().putString("server", url).apply() }
     private fun getServerUrl(): String = getPreferences(Context.MODE_PRIVATE).getString("server", DEFAULT_SERVER) ?: DEFAULT_SERVER
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
 
-    override fun onDestroy() { poll = false; executor.shutdownNow(); super.onDestroy() }
+    override fun onDestroy() {
+        poll = false
+        executor.shutdownNow()
+        super.onDestroy()
+    }
 }
