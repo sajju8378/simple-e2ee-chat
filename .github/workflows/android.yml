@@ -21,7 +21,7 @@ jobs:
         working-directory: server
         run: npm install
 
-      - name: Backend health smoke test
+      - name: Backend health and registration smoke test
         working-directory: server
         run: |
           node src/server.js > /tmp/simple-e2ee-server.log 2>&1 &
@@ -30,12 +30,20 @@ jobs:
           for i in {1..30}; do
             if curl --fail --silent http://127.0.0.1:8080/health; then
               echo
-              exit 0
+              break
             fi
             sleep 1
           done
-          cat /tmp/simple-e2ee-server.log
-          exit 1
+          HEALTH=$(curl --fail --silent http://127.0.0.1:8080/health)
+          echo "$HEALTH" | jq -e '.ok == true and .service == "simple-e2ee-chat"'
+          REGISTER=$(curl --fail --silent --show-error \
+            -H 'Content-Type: application/json' \
+            -d '{"displayName":"CI Test","passwordHash":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","publicKey":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}' \
+            http://127.0.0.1:8080/v1/register)
+          echo "$REGISTER" | jq -e '.id | startswith("E2E-")'
+          echo "$REGISTER" | jq -e '.token | length > 20'
+          echo "$REGISTER" | jq -e '.publicKey | length >= 100'
+          echo "$REGISTER" | jq -e '.displayName == "CI Test"'
 
       - name: Set up JDK
         uses: actions/setup-java@v4
