@@ -43,25 +43,7 @@ class ApiClient(private val baseUrl: String, private val token: String) {
         return result
     }
 
-    private fun request(method: String, path: String, body: JSONObject?): JSONObject {
-        val connection = URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection
-        connection.requestMethod = method
-        connection.connectTimeout = 15000
-        connection.readTimeout = 15000
-        connection.setRequestProperty("Accept", "application/json")
-        if (token.isNotBlank()) connection.setRequestProperty("Authorization", "Bearer $token")
-        if (body != null) {
-            connection.doOutput = true
-            connection.setRequestProperty("Content-Type", "application/json")
-            connection.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
-        }
-        val code = connection.responseCode
-        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-        val text = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
-        connection.disconnect()
-        if (code !in 200..299) throw IllegalStateException(JSONObject(text).optString("error", "Server error ($code)"))
-        return JSONObject(text)
-    }
+    private fun request(method: String, path: String, body: JSONObject?): JSONObject = requestJson(baseUrl, method, path, body)
 
     companion object {
         fun health(base: String): JSONObject = requestStatic(base, "GET", "/health", null)
@@ -69,7 +51,7 @@ class ApiClient(private val baseUrl: String, private val token: String) {
         fun register(base: String, name: String, password: String, publicKey: String): AuthResult {
             val body = JSONObject().put("displayName", name).put("passwordHash", Crypto.passwordHash(password)).put("publicKey", publicKey)
             val json = requestStatic(base, "POST", "/v1/register", body)
-            return AuthResult(json.getString("id"), json.getString("token"), json.getString("publicKey"), name)
+            return AuthResult(json.getString("id"), json.getString("token"), json.getString("publicKey"), json.optString("displayName", name))
         }
 
         fun login(base: String, id: String, password: String): AuthResult {
@@ -78,23 +60,63 @@ class ApiClient(private val baseUrl: String, private val token: String) {
             return AuthResult(json.getString("id"), json.getString("token"), json.getString("publicKey"), json.optString("displayName", "User"))
         }
 
-        private fun requestStatic(base: String, method: String, path: String, body: JSONObject?): JSONObject {
+        private fun requestStatic(base: String, method: String, path: String, body: JSONObject?): JSONObject = requestJson(base, method, path, body)
+
+        private fun requestJson(base: String, method: String, path: String, body: JSONObject?): JSONObject {
             val connection = URL(base.trimEnd('/') + path).openConnection() as HttpURLConnection
-            connection.requestMethod = method
-            connection.connectTimeout = 15000
-            connection.readTimeout = 15000
-            connection.setRequestProperty("Accept", "application/json")
-            if (body != null) {
-                connection.doOutput = true
-                connection.setRequestProperty("Content-Type", "application/json")
-                connection.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
+            try {
+                connection.requestMethod = method
+                connection.connectTimeout = 15000
+                connection.readTimeout = 15000
+                connection.setRequestProperty("Accept", "application/json")
+                if (body != null) {
+                    connection.doOutput = true
+                    connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    connection.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
+                }
+                val code = connection.responseCode
+                val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+                val text = stream?.bufferedReader()?.use { it.readText() }?.trim().orEmpty()
+
+                if (code !in 200..299) {
+                    throw IllegalStateException(errorMessage(code, text))
+                }
+                if (text.isBlank()) {
+                    throw IllegalStateException("Server returned an empty response ($code)")
+                }
+                return parseObject(text, "Server returned an invalid response ($code)")
+            } catch (e: IllegalStateException) {
+                throw e
+            } catch (e: Exception) {
+                throw IllegalStateException("Network error: ${e.message ?: e.javaClass.simpleName}", e)
+            } finally {
+                connection.disconnect()
             }
-            val code = connection.responseCode
-            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-            val text = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
-            connection.disconnect()
-            if (code !in 200..299) throw IllegalStateException(JSONObject(text).optString("error", "Server error ($code)"))
-            return JSONObject(text)
+        }
+
+        private fun errorMessage(code: Int, text: String): String {
+            if (text.isBlank()) return "Server error ($code)"
+            return try {
+                val value = org.json.JSONTokener(text).nextValue()
+                when (value) {
+                    is JSONObject -> value.optString("error").ifBlank { value.optString("message") }.ifBlank { "Server error ($code)" }
+                    is String -> value.ifBlank { "Server error ($code)" }
+                    else -> "Server error ($code)"
+                }
+            } catch (_: Exception) {
+                text.take(240).ifBlank { "Server error ($code)" }
+            }
+        }
+
+        private fun parseObject(text: String, fallback: String): JSONObject {
+            return try {
+                val value = org.json.JSONTokener(text).nextValue()
+                if (value is JSONObject) value else throw IllegalStateException("$fallback: expected JSON object")
+            } catch (e: IllegalStateException) {
+                throw e
+            } catch (_: Exception) {
+                throw IllegalStateException("$fallback: ${text.take(240)}")
+            }
         }
     }
 }
