@@ -43,7 +43,7 @@ class ApiClient(private val baseUrl: String, private val token: String) {
         return result
     }
 
-    private fun request(method: String, path: String, body: JSONObject?): JSONObject = requestJson(baseUrl, method, path, body)
+    private fun request(method: String, path: String, body: JSONObject?): JSONObject = requestJson(baseUrl, method, path, body, token)
 
     companion object {
         fun health(base: String): JSONObject = requestStatic(base, "GET", "/health", null)
@@ -60,15 +60,18 @@ class ApiClient(private val baseUrl: String, private val token: String) {
             return AuthResult(json.getString("id"), json.getString("token"), json.getString("publicKey"), json.optString("displayName", "User"))
         }
 
-        private fun requestStatic(base: String, method: String, path: String, body: JSONObject?): JSONObject = requestJson(base, method, path, body)
+        private fun requestStatic(base: String, method: String, path: String, body: JSONObject?): JSONObject = requestJson(base, method, path, body, null)
 
-        private fun requestJson(base: String, method: String, path: String, body: JSONObject?): JSONObject {
+        private fun requestJson(base: String, method: String, path: String, body: JSONObject?, authToken: String?): JSONObject {
             val connection = URL(base.trimEnd('/') + path).openConnection() as HttpURLConnection
             try {
                 connection.requestMethod = method
                 connection.connectTimeout = 15000
                 connection.readTimeout = 15000
                 connection.setRequestProperty("Accept", "application/json")
+                if (!authToken.isNullOrBlank()) {
+                    connection.setRequestProperty("Authorization", "Bearer $authToken")
+                }
                 if (body != null) {
                     connection.doOutput = true
                     connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
