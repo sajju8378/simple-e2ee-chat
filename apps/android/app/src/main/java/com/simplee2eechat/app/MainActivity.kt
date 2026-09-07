@@ -34,7 +34,7 @@ class MainActivity : AppCompatActivity() {
     private val sentPlaintext = mutableMapOf<String, String>()
 
     companion object {
-        private const val DEFAULT_SERVER = "https://simple-e2ee-chat-api-sajju8378.onrender.com"
+        private const val DEFAULT_SERVER = "https://simple-e2ee-chat.onrender.com"
         private const val PREFS = "e2ee_ui"
         private const val CONTACTS = "contacts"
         private const val BG = 0xFFF7F9FC.toInt()
@@ -141,7 +141,7 @@ class MainActivity : AppCompatActivity() {
         val login = button("Log in", true)
         r.addView(login, LinearLayout.LayoutParams(-1, dp(52)))
         r.addView(spacer(10))
-        r.addView(text("Server: simple-e2ee-chat-api-sajju8378.onrender.com", 13f, MUTED).apply { gravity = Gravity.CENTER })
+        r.addView(text("Server: simple-e2ee-chat.onrender.com", 13f, MUTED).apply { gravity = Gravity.CENTER })
         val bottom = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
         bottom.addView(spacer(14))
         bottom.addView(text("New to Simple E2EE Chat?", 14f, MUTED).apply { gravity = Gravity.CENTER })
