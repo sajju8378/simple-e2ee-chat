@@ -1,15 +1,21 @@
 package com.simplee2eechat.app
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
@@ -17,384 +23,378 @@ class MainActivity : AppCompatActivity() {
     private val main = Handler(Looper.getMainLooper())
     private lateinit var store: SecureStore
     private var api: ApiClient? = null
+    private var poll = false
     private var currentPeer = ""
     private var currentPeerName = ""
     private lateinit var messagesBox: LinearLayout
     private lateinit var messageInput: EditText
-    private lateinit var status: TextView
-    private var poll = false
+    private lateinit var chatStatus: TextView
     private val sentPlaintext = mutableMapOf<String, String>()
 
     companion object {
         private const val DEFAULT_SERVER = "https://simple-e2ee-chat.onrender.com"
+        private const val PREFS = "e2ee_ui"
+        private const val CONTACTS = "contacts"
+        private const val BG = 0xFFF7F9FC.toInt()
+        private const val TEXT = 0xFF172033.toInt()
+        private const val MUTED = 0xFF687386.toInt()
+        private const val PRIMARY = 0xFF2563EB.toInt()
+        private const val CARD = 0xFFFFFFFF.toInt()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = SecureStore(this)
-        val savedUrl = getPreferences(Context.MODE_PRIVATE).getString("server", DEFAULT_SERVER) ?: DEFAULT_SERVER
-        val token = store.token()
         val id = store.userId()
-        if (!token.isNullOrBlank() && !id.isNullOrBlank()) {
-            api = ApiClient(savedUrl, token)
-            showChat(id)
+        val password = store.password()
+        if (!id.isNullOrBlank() && !password.isNullOrBlank() && !store.privateKeyBlob().isNullOrBlank()) {
+            silentLogin(id, password)
         } else {
-            showAuth(savedUrl)
+            showLogin(id.orEmpty())
         }
     }
 
-    private fun baseLayout(titleText: String): LinearLayout = LinearLayout(this).apply {
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun root(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(32, 42, 32, 28)
-        addView(TextView(this@MainActivity).apply {
-            text = titleText
-            textSize = 28f
-            gravity = Gravity.CENTER_HORIZONTAL
-        }, LinearLayout.LayoutParams(-1, -2))
+        setBackgroundColor(BG)
+        setPadding(dp(18), dp(16), dp(18), dp(14))
+    }
+
+    private fun text(value: String, size: Float = 16f, color: Int = TEXT, bold: Boolean = false): TextView = TextView(this).apply {
+        this.text = value
+        textSize = size
+        setTextColor(color)
+        if (bold) typeface = Typeface.DEFAULT_BOLD
     }
 
     private fun edit(hint: String, password: Boolean = false): EditText = EditText(this).apply {
         this.hint = hint
         isSingleLine = true
+        textSize = 16f
+        setTextColor(TEXT)
+        setHintTextColor(MUTED)
+        setPadding(dp(16), dp(5), dp(16), dp(5))
+        background = rounded(CARD, 14, 0xFFD9E0EA.toInt())
         if (password) inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-        setPadding(16, 12, 16, 12)
     }
 
-    private fun showAuth(serverUrl: String) {
+    private fun button(label: String, primary: Boolean = false): Button = Button(this).apply {
+        text = label
+        textSize = 14f
+        isAllCaps = false
+        setTextColor(if (primary) Color.WHITE else TEXT)
+        background = rounded(if (primary) PRIMARY else CARD, 14, if (primary) PRIMARY else 0xFFD9E0EA.toInt())
+        minHeight = dp(48)
+        stateListAnimator = null
+    }
+
+    private fun rounded(fill: Int, radius: Int, stroke: Int = 0): GradientDrawable = GradientDrawable().apply {
+        setColor(fill)
+        cornerRadius = dp(radius).toFloat()
+        if (stroke != 0) setStroke(dp(1), stroke)
+    }
+
+    private fun spacer(height: Int): Space = Space(this).apply { minimumHeight = dp(height) }
+
+    private fun silentLogin(id: String, password: String) {
+        showLoading("Signing you in…")
+        executor.execute {
+            try {
+                val base = getServerUrl()
+                val r = ApiClient.login(base, id, password)
+                store.saveAccount(r.id, r.token, store.privateKeyBlob()!!, r.publicKey, r.displayName, password)
+                api = ApiClient(base, r.token)
+                main.post { showChatList(r.id, r.displayName) }
+            } catch (e: Exception) {
+                main.post { showLogin(id, "Please sign in again") }
+            }
+        }
+    }
+
+    private fun showLoading(message: String) {
+        val r = root()
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
+        box.addView(text("Simple E2EE Chat", 28f, TEXT, true))
+        box.addView(spacer(12))
+        box.addView(text(message, 16f, MUTED))
+        r.addView(box, LinearLayout.LayoutParams(-1, 0, 1f))
+        setContentView(r)
+    }
+
+    private fun showLogin(prefilledId: String = "", message: String = "") {
         poll = false
-        val root = baseLayout("Simple E2EE Chat")
-        root.addView(TextView(this).apply {
-            text = "Create an ID on each phone, then chat privately."
-            textSize = 16f
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, 8, 0, 20)
-        })
+        val r = root()
+        r.gravity = Gravity.CENTER_HORIZONTAL
+        r.setPadding(dp(24), dp(40), dp(24), dp(18))
+        r.addView(text("Simple E2EE Chat", 30f, TEXT, true), LinearLayout.LayoutParams(-1, -2))
+        r.addView(text("Private one-to-one messaging", 16f, MUTED).apply { gravity = Gravity.CENTER; setPadding(0, dp(7), 0, dp(28)) })
 
-        val url = edit("Server URL").apply { setText(serverUrl) }
-        val id = edit("Messenger ID (for login)")
-        val password = edit("Password (8+ characters)", true)
-        val display = edit("Display name (for a new account)")
-        root.addView(url)
-        root.addView(id)
-        root.addView(password)
-        root.addView(display)
+        val id = edit("Messenger ID  •  E2E-XXXXXXXX").apply { setText(prefilledId) }
+        val password = edit("Password", true).apply { setText(store.password().orEmpty()) }
+        r.addView(id, LinearLayout.LayoutParams(-1, dp(56)).apply { bottomMargin = dp(12) })
+        r.addView(password, LinearLayout.LayoutParams(-1, dp(56)).apply { bottomMargin = dp(16) })
+        val status = text(message, 14f, if (message.isBlank()) MUTED else 0xFFB42318.toInt()).apply { gravity = Gravity.CENTER }
+        r.addView(status, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+        val login = button("Log in", true)
+        r.addView(login, LinearLayout.LayoutParams(-1, dp(52)))
+        r.addView(spacer(10))
+        r.addView(text("Server: simple-e2ee-chat.onrender.com", 13f, MUTED).apply { gravity = Gravity.CENTER })
 
-        val serverStatus = TextView(this).apply {
-            text = "Checking server…"
-            setPadding(0, 10, 0, 10)
-        }
-        root.addView(serverStatus)
-
-        val check = Button(this).apply { text = "Check server" }
-        val login = Button(this).apply { text = "Log in" }
-        val signup = Button(this).apply { text = "Create new account" }
-        root.addView(check)
-        root.addView(login)
-        root.addView(signup)
-
-        val note = TextView(this).apply {
-            text = "For two phones: install this APK on both phones. Create a different account/ID on each phone, exchange the IDs, and open the conversation."
-            setPadding(0, 18, 0, 0)
-        }
-        root.addView(note)
-        setContentView(root)
-
-        fun validBase(): String? {
-            val base = url.text.toString().trim().trimEnd('/')
-            if (!base.startsWith("https://") && !base.startsWith("http://")) {
-                toast("Enter a valid server URL")
-                return null
-            }
-            saveServer(base)
-            return base
-        }
-
-        fun checkServer() {
-            val base = validBase() ?: return
-            serverStatus.text = "Connecting to server…"
-            check.isEnabled = false
-            executor.execute {
-                try {
-                    val h = ApiClient.health(base)
-                    main.post {
-                        serverStatus.text = "Server online ✓  Users: ${h.optInt("users", 0)}"
-                        check.isEnabled = true
-                    }
-                } catch (e: Exception) {
-                    main.post {
-                        serverStatus.text = "Server unavailable: ${e.message ?: "connection failed"}"
-                        check.isEnabled = true
-                    }
-                }
-            }
-        }
-
-        check.setOnClickListener { checkServer() }
+        val bottom = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
+        bottom.addView(spacer(14))
+        bottom.addView(text("New to Simple E2EE Chat?", 14f, MUTED).apply { gravity = Gravity.CENTER })
+        val signup = button("Create a new account")
+        signup.setTextColor(PRIMARY)
+        signup.background = rounded(Color.TRANSPARENT, 12)
+        bottom.addView(signup, LinearLayout.LayoutParams(-1, dp(50)))
+        r.addView(bottom, LinearLayout.LayoutParams(-1, 0, 1f))
+        r.addView(text("Credentials are stored encrypted on this phone for automatic sign-in.", 12f, MUTED).apply { gravity = Gravity.CENTER })
+        setContentView(r)
 
         login.setOnClickListener {
-            val base = validBase() ?: return@setOnClickListener
             val uid = id.text.toString().trim().uppercase()
             val pw = password.text.toString()
             if (!uid.matches(Regex("E2E-[A-Z0-9]{8}")) || pw.length < 8) {
-                toast("Enter a valid Messenger ID and an 8+ character password")
+                status.text = "Enter a valid Messenger ID and password"
                 return@setOnClickListener
             }
             login.isEnabled = false
-            signup.isEnabled = false
-            serverStatus.text = "Logging in securely…"
+            status.text = "Signing in…"
             executor.execute {
                 try {
-                    val r = ApiClient.login(base, uid, pw)
-                    val privateKey = store.privateKeyBlob()
-                        ?: error("This account's private key is not on this phone. Create a new account on this phone for testing.")
-                    store.saveAccount(r.id, r.token, privateKey, r.publicKey)
-                    api = ApiClient(base, r.token)
-                    main.post { showChat(r.id) }
+                    val base = getServerUrl()
+                    val result = ApiClient.login(base, uid, pw)
+                    val privateKey = store.privateKeyBlob() ?: throw IllegalStateException("This account's private key is not on this phone. Create a new account here.")
+                    store.saveAccount(result.id, result.token, privateKey, result.publicKey, result.displayName, pw)
+                    api = ApiClient(base, result.token)
+                    main.post { showChatList(result.id, result.displayName) }
                 } catch (e: Exception) {
-                    main.post {
-                        login.isEnabled = true
-                        signup.isEnabled = true
-                        serverStatus.text = e.message ?: "Login failed"
-                    }
+                    main.post { login.isEnabled = true; status.text = e.message ?: "Login failed" }
                 }
             }
         }
+        signup.setOnClickListener { showSignup() }
+    }
 
-        signup.setOnClickListener {
-            val base = validBase() ?: return@setOnClickListener
-            val name = display.text.toString().trim()
-            val pw = password.text.toString()
-            if (name.isBlank() || pw.length < 8) {
-                toast("Enter a display name and an 8+ character password")
-                return@setOnClickListener
-            }
-            login.isEnabled = false
-            signup.isEnabled = false
-            serverStatus.text = "Creating your encrypted identity…"
+    private fun showSignup() {
+        poll = false
+        val r = root()
+        r.gravity = Gravity.CENTER_HORIZONTAL
+        r.setPadding(dp(24), dp(34), dp(24), dp(18))
+        r.addView(text("Create your account", 28f, TEXT, true), LinearLayout.LayoutParams(-1, -2))
+        r.addView(text("Choose the name people will see in chat.", 15f, MUTED).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(28)) })
+        val name = edit("Your name")
+        val password = edit("Password  •  8+ characters", true)
+        r.addView(name, LinearLayout.LayoutParams(-1, dp(56)).apply { bottomMargin = dp(12) })
+        r.addView(password, LinearLayout.LayoutParams(-1, dp(56)).apply { bottomMargin = dp(16) })
+        val status = text("", 14f, 0xFFB42318.toInt()).apply { gravity = Gravity.CENTER }
+        r.addView(status, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+        val create = button("Create account", true)
+        r.addView(create, LinearLayout.LayoutParams(-1, dp(52)))
+        val bottom = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
+        bottom.addView(spacer(14))
+        bottom.addView(text("Already registered?", 14f, MUTED).apply { gravity = Gravity.CENTER })
+        val back = button("Log in")
+        back.setTextColor(PRIMARY); back.background = rounded(Color.TRANSPARENT, 12)
+        bottom.addView(back, LinearLayout.LayoutParams(-1, dp(50)))
+        r.addView(bottom, LinearLayout.LayoutParams(-1, 0, 1f))
+        r.addView(text("A unique Messenger ID will be generated for you.", 12f, MUTED).apply { gravity = Gravity.CENTER })
+        setContentView(r)
+
+        create.setOnClickListener {
+            val n = name.text.toString().trim(); val pw = password.text.toString()
+            if (n.isBlank() || pw.length < 8) { status.text = "Enter your name and an 8+ character password"; return@setOnClickListener }
+            create.isEnabled = false; status.text = "Creating your secure identity…"
             executor.execute {
                 try {
                     val keys = Crypto.generateKeyPair()
-                    val r = ApiClient.register(base, name, pw, keys.publicKey)
-                    store.saveAccount(r.id, r.token, keys.privateKey, r.publicKey)
-                    api = ApiClient(base, r.token)
-                    main.post {
-                        showIdentity(r.id, name)
-                    }
+                    val result = ApiClient.register(getServerUrl(), n, pw, keys.publicKey)
+                    store.saveAccount(result.id, result.token, keys.privateKey, result.publicKey, n, pw)
+                    api = ApiClient(getServerUrl(), result.token)
+                    main.post { showWelcome(result.id, n) }
                 } catch (e: Exception) {
-                    main.post {
-                        login.isEnabled = true
-                        signup.isEnabled = true
-                        serverStatus.text = e.message ?: "Registration failed"
-                    }
+                    main.post { create.isEnabled = true; status.text = e.message ?: "Registration failed" }
                 }
             }
         }
-
-        // Give the user an immediate answer when the default backend is already reachable.
-        checkServer()
+        back.setOnClickListener { showLogin(store.userId().orEmpty()) }
     }
 
-    private fun showIdentity(id: String, name: String) {
+    private fun showWelcome(id: String, name: String) {
         poll = false
-        val root = baseLayout("Account created ✓")
-        root.addView(TextView(this).apply {
-            text = "Welcome, $name"
-            textSize = 18f
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, 12, 0, 10)
-        })
-        root.addView(TextView(this).apply {
-            text = "Your Messenger ID"
-            gravity = Gravity.CENTER_HORIZONTAL
-            textSize = 15f
-        })
-        root.addView(TextView(this).apply {
-            text = id
-            textSize = 26f
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, 8, 0, 12)
-        })
-        val copy = Button(this).apply { text = "Copy my ID" }
-        val continueButton = Button(this).apply { text = "Continue to chat" }
-        root.addView(copy)
-        root.addView(continueButton)
-        root.addView(TextView(this).apply {
-            text = "Send this ID to the other phone. Do not share your password or private key."
-            setPadding(0, 18, 0, 0)
-        })
-        setContentView(root)
-
+        val r = root(); r.gravity = Gravity.CENTER_HORIZONTAL
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
+        box.addView(text("You're ready ✓", 28f, TEXT, true))
+        box.addView(text("Welcome, $name", 18f, MUTED).apply { setPadding(0, dp(10), 0, dp(22)) })
+        box.addView(text("Your Messenger ID", 14f, MUTED))
+        box.addView(text(id, 27f, TEXT, true).apply { setPadding(0, dp(8), 0, dp(18)) })
+        val copy = button("Copy Messenger ID")
+        val open = button("Open chats", true)
+        box.addView(copy, LinearLayout.LayoutParams(-1, dp(50)).apply { bottomMargin = dp(10) })
+        box.addView(open, LinearLayout.LayoutParams(-1, dp(50)))
+        r.addView(box, LinearLayout.LayoutParams(-1, 0, 1f).apply { gravity = Gravity.CENTER })
+        r.addView(text("Share your ID with a friend. Never share your password or private key.", 12f, MUTED).apply { gravity = Gravity.CENTER })
+        setContentView(r)
         copy.setOnClickListener {
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("Messenger ID", id))
-            toast("Messenger ID copied")
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("Messenger ID", id)); toast("Messenger ID copied")
         }
-        continueButton.setOnClickListener { showChat(id) }
+        open.setOnClickListener { showChatList(id, name) }
     }
 
-    private fun showChat(myId: String) {
-        poll = true
-        currentPeer = ""
-        currentPeerName = ""
-        val root = baseLayout("Messages")
-        root.addView(TextView(this).apply {
-            text = "Your ID: $myId"
-            textSize = 15f
-            setPadding(0, 8, 0, 4)
-        })
-        root.addView(TextView(this).apply {
-            text = "Exchange Messenger IDs with the other phone."
-            setPadding(0, 0, 0, 10)
-        })
-        val peer = edit("Friend's Messenger ID (E2E-XXXXXXXX)")
-        root.addView(peer)
-        val open = Button(this).apply { text = "Find friend & open chat" }
-        root.addView(open)
-        messagesBox = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, 12, 0, 12)
-        }
-        root.addView(ScrollView(this).apply {
-            addView(messagesBox)
-            layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
-        })
-        status = TextView(this).apply {
-            text = "Choose a friend to start chatting."
-            setPadding(0, 6, 0, 8)
-        }
-        root.addView(status)
-        messageInput = edit("Type an encrypted message…")
-        root.addView(messageInput)
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val send = Button(this).apply {
-            text = "Send securely"
-            isEnabled = false
-        }
-        val refresh = Button(this).apply { text = "Refresh" }
-        val logout = Button(this).apply { text = "Log out" }
-        row.addView(send, LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(refresh, LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(logout, LinearLayout.LayoutParams(0, -2, 1f))
-        root.addView(row)
-        setContentView(root)
+    private data class Contact(val id: String, val name: String)
 
-        open.setOnClickListener {
-            currentPeer = peer.text.toString().trim().uppercase()
-            if (!currentPeer.matches(Regex("E2E-[A-Z0-9]{8}")) || currentPeer == myId) {
-                toast("Enter the other person's Messenger ID")
-                return@setOnClickListener
-            }
-            send.isEnabled = false
-            status.text = "Finding friend…"
+    private fun contacts(): MutableList<Contact> {
+        val raw = getSharedPreferences(PREFS, MODE_PRIVATE).getString(CONTACTS, "") ?: ""
+        if (raw.isBlank()) return mutableListOf()
+        return raw.split("\n").mapNotNull {
+            val p = it.split("|", limit = 2)
+            if (p.size == 2 && p[0].matches(Regex("E2E-[A-Z0-9]{8}"))) Contact(p[0], p[1]) else null
+        }.toMutableList()
+    }
+
+    private fun saveContact(id: String, name: String) {
+        val list = contacts(); list.removeAll { it.id == id }; list.add(0, Contact(id, name))
+        val raw = list.take(30).joinToString("\n") { "${it.id}|${it.name.replace("\n", " ")}" }
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(CONTACTS, raw).apply()
+    }
+
+    private fun showChatList(myId: String, myName: String) {
+        poll = false
+        val r = root(); r.setPadding(0, 0, 0, 0)
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(20), dp(18), dp(14), dp(14)); setBackgroundColor(Color.WHITE) }
+        val titleBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        titleBox.addView(text("Chats", 28f, TEXT, true)); titleBox.addView(text(myName, 13f, MUTED))
+        top.addView(titleBox, LinearLayout.LayoutParams(0, -2, 1f))
+        val me = button("My ID"); me.setTextSize(12f); me.setOnClickListener { showIdentityCard(myId, myName) }
+        top.addView(me, LinearLayout.LayoutParams(dp(74), dp(44))); r.addView(top)
+
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(10), dp(12), dp(10)) }
+        val scroll = ScrollView(this).apply { addView(list) }; r.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        val contactsNow = contacts()
+        if (contactsNow.isEmpty()) {
+            val empty = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(dp(30), dp(50), dp(30), dp(50)) }
+            empty.addView(text("No chats yet", 22f, TEXT, true).apply { gravity = Gravity.CENTER })
+            empty.addView(text("Start a new chat with your friend's Messenger ID.", 15f, MUTED).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(18)) })
+            list.addView(empty)
+        } else contactsNow.forEach { addChatRow(list, it) }
+
+        val bottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(14), dp(12)); setBackgroundColor(Color.WHITE) }
+        val newChat = button("＋  New chat", true); val logout = button("Log out")
+        bottom.addView(newChat, LinearLayout.LayoutParams(0, dp(52), 1f).apply { rightMargin = dp(8) }); bottom.addView(logout, LinearLayout.LayoutParams(dp(92), dp(52)))
+        r.addView(bottom); setContentView(r)
+        newChat.setOnClickListener { showFindFriend(myId) }
+        logout.setOnClickListener { store.clear(); api = null; showLogin() }
+    }
+
+    private fun addChatRow(list: LinearLayout, contact: Contact) {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), dp(12), dp(10), dp(12)); background = rounded(Color.WHITE, 16) }
+        val avatar = TextView(this).apply { text = contact.name.trim().take(1).uppercase(Locale.getDefault()); textSize = 20f; typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; setTextColor(Color.WHITE); background = rounded(PRIMARY, 50) }
+        row.addView(avatar, LinearLayout.LayoutParams(dp(52), dp(52)).apply { rightMargin = dp(14) })
+        val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        info.addView(text(contact.name, 17f, TEXT, true)); info.addView(text(contact.id, 12f, MUTED).apply { setPadding(0, dp(4), 0, 0) })
+        row.addView(info, LinearLayout.LayoutParams(0, -2, 1f)); row.addView(text("›", 30f, MUTED).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(dp(30), dp(52)))
+        row.setOnClickListener { showChat(contact.id, contact.name) }
+        list.addView(row, LinearLayout.LayoutParams(-1, dp(76)).apply { bottomMargin = dp(8) })
+    }
+
+    private fun showFindFriend(myId: String) {
+        val r = root(); r.setPadding(0, 0, 0, 18)
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(12)); setBackgroundColor(Color.WHITE) }
+        val back = button("‹"); back.setTextSize(24f); top.addView(back, LinearLayout.LayoutParams(dp(52), dp(48))); top.addView(text("New chat", 23f, TEXT, true).apply { setPadding(dp(12), 0, 0, 0) }); r.addView(top)
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(22), dp(20), 0) }
+        body.addView(text("Start a private conversation", 22f, TEXT, true)); body.addView(text("Enter your friend's Messenger ID.", 15f, MUTED).apply { setPadding(0, dp(7), 0, dp(18)) })
+        val id = edit("Friend's ID  •  E2E-XXXXXXXX"); body.addView(id, LinearLayout.LayoutParams(-1, dp(56)).apply { bottomMargin = dp(12) })
+        val find = button("Find & open chat", true); body.addView(find, LinearLayout.LayoutParams(-1, dp(52)))
+        val status = text("", 14f, MUTED).apply { setPadding(0, dp(14), 0, 0) }; body.addView(status); r.addView(body); setContentView(r)
+        back.setOnClickListener { showChatList(myId, store.displayName().orEmpty()) }
+        find.setOnClickListener {
+            val peer = id.text.toString().trim().uppercase()
+            if (!peer.matches(Regex("E2E-[A-Z0-9]{8}")) || peer == myId) { status.text = "Enter the other person's Messenger ID"; return@setOnClickListener }
+            find.isEnabled = false; status.text = "Finding user…"
             executor.execute {
-                try {
-                    val friend = api?.getUser(currentPeer) ?: error("Not logged in")
-                    currentPeerName = friend.displayName
-                    main.post {
-                        send.isEnabled = true
-                        status.text = "Secure conversation with ${friend.displayName} ($currentPeer)"
-                        loadMessages(myId)
-                    }
-                } catch (e: Exception) {
-                    main.post {
-                        status.text = e.message ?: "Friend not found"
-                        send.isEnabled = false
-                    }
-                }
+                try { val friend = api?.getUser(peer) ?: error("Not logged in"); saveContact(friend.id, friend.displayName); main.post { showChat(friend.id, friend.displayName) } }
+                catch (e: Exception) { main.post { find.isEnabled = true; status.text = e.message ?: "User not found" } }
             }
         }
+    }
 
-        refresh.setOnClickListener {
-            if (currentPeer.isNotBlank()) loadMessages(myId) else status.text = "Enter a friend's ID first."
-        }
+    private fun showIdentityCard(myId: String, myName: String) {
+        val r = root(); val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
+        box.addView(text("My profile", 28f, TEXT, true)); box.addView(text(myName, 19f, MUTED).apply { setPadding(0, dp(8), 0, dp(22)) }); box.addView(text("Messenger ID", 14f, MUTED)); box.addView(text(myId, 25f, TEXT, true).apply { setPadding(0, dp(8), 0, dp(20)) })
+        val copy = button("Copy ID", true); val close = button("Back to chats")
+        box.addView(copy, LinearLayout.LayoutParams(-1, dp(50)).apply { bottomMargin = dp(10) }); box.addView(close, LinearLayout.LayoutParams(-1, dp(50)))
+        r.addView(box, LinearLayout.LayoutParams(-1, 0, 1f).apply { gravity = Gravity.CENTER }); setContentView(r)
+        copy.setOnClickListener { val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager; cm.setPrimaryClip(ClipData.newPlainText("Messenger ID", myId)); toast("Messenger ID copied") }
+        close.setOnClickListener { showChatList(myId, myName) }
+    }
 
+    private fun showChat(peer: String, name: String) {
+        poll = true; currentPeer = peer; currentPeerName = name; saveContact(peer, name)
+        val myId = store.userId().orEmpty(); val r = root(); r.setPadding(0, 0, 0, 0)
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), dp(10), dp(12), dp(10)); setBackgroundColor(Color.WHITE) }
+        val back = button("‹"); back.setTextSize(24f); top.addView(back, LinearLayout.LayoutParams(dp(50), dp(48)))
+        val avatar = TextView(this).apply { text = name.take(1).uppercase(Locale.getDefault()); textSize = 18f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD; background = rounded(PRIMARY, 50) }
+        top.addView(avatar, LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(5); rightMargin = dp(10) })
+        val head = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }; head.addView(text(name, 18f, TEXT, true)); head.addView(text(peer, 11f, MUTED).apply { setPadding(0, dp(2), 0, 0) }); top.addView(head, LinearLayout.LayoutParams(0, -2, 1f)); r.addView(top)
+
+        messagesBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(12), dp(12), dp(8)) }
+        val scroll = ScrollView(this).apply { addView(messagesBox); isFillViewport = true }; r.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        chatStatus = text("End-to-end encrypted", 11f, MUTED).apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, dp(5)) }; r.addView(chatStatus)
+        val compose = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), dp(8), dp(10), dp(12)); setBackgroundColor(Color.WHITE) }
+        messageInput = edit("Message"); messageInput.background = rounded(0xFFF1F4F8.toInt(), 24); val send = button("Send", true)
+        compose.addView(messageInput, LinearLayout.LayoutParams(0, dp(52), 1f).apply { rightMargin = dp(8) }); compose.addView(send, LinearLayout.LayoutParams(dp(82), dp(52))); r.addView(compose); setContentView(r)
+
+        back.setOnClickListener { poll = false; showChatList(myId, store.displayName().orEmpty()) }
         send.setOnClickListener {
-            val text = messageInput.text.toString().trim()
-            if (currentPeer.isBlank() || text.isBlank()) return@setOnClickListener
-            send.isEnabled = false
-            status.text = "Encrypting and sending…"
+            val body = messageInput.text.toString().trim(); if (body.isBlank() || currentPeer.isBlank()) return@setOnClickListener
+            send.isEnabled = false; chatStatus.text = "Encrypting and sending…"
             executor.execute {
                 try {
-                    val a = api ?: error("Not logged in")
-                    val recipient = a.getUser(currentPeer)
-                    val envelope = Crypto.encrypt(text, recipient.publicKey)
-                    val messageId = a.sendMessage(currentPeer, myId, envelope)
-                    sentPlaintext[messageId] = text
-                    main.post {
-                        messageInput.setText("")
-                        status.text = "Encrypted message sent ✓"
-                        send.isEnabled = true
-                        loadMessages(myId)
-                    }
-                } catch (e: Exception) {
-                    main.post {
-                        status.text = e.message ?: "Send failed"
-                        send.isEnabled = true
-                    }
-                }
+                    val client = api ?: error("Not logged in"); val recipient = client.getUser(currentPeer); val envelope = Crypto.encrypt(body, recipient.publicKey); val messageId = client.sendMessage(currentPeer, myId, envelope); sentPlaintext[messageId] = body
+                    main.post { messageInput.setText(""); chatStatus.text = "End-to-end encrypted"; send.isEnabled = true; loadMessages(myId, scroll) }
+                } catch (e: Exception) { main.post { send.isEnabled = true; chatStatus.text = e.message ?: "Send failed" } }
             }
         }
-
-        logout.setOnClickListener {
-            poll = false
-            store.clear()
-            api = null
-            showAuth(getServerUrl())
-        }
+        loadMessages(myId, scroll)
     }
 
-    private fun loadMessages(myId: String) {
+    private fun loadMessages(myId: String, scroll: ScrollView) {
         if (!poll || currentPeer.isBlank()) return
         executor.execute {
             try {
-                val list = api?.conversation(currentPeer) ?: emptyList()
-                val out = list.map { m ->
-                    val sender = if (m.from == myId) "You" else currentPeerName.ifBlank { m.from }
-                    val text = if (m.from == myId) {
-                        sentPlaintext[m.id] ?: "[Sent encrypted message]"
-                    } else {
-                        try {
-                            Crypto.decrypt(m.envelope, store.privateKeyBlob() ?: error("private key missing"))
-                        } catch (_: Exception) {
-                            "[Unable to decrypt message]"
-                        }
-                    }
-                    "${m.createdAt.take(19).replace('T', ' ')}  $sender: $text"
+                val list = api?.conversation(currentPeer).orEmpty()
+                val rows = list.map { m ->
+                    val mine = m.from == myId
+                    val body = if (mine) sentPlaintext[m.id] ?: "[Sent message]" else try { Crypto.decrypt(m.envelope, store.privateKeyBlob() ?: error("private key missing")) } catch (_: Exception) { "[Unable to decrypt]" }
+                    Triple(mine, body, formatTime(m.createdAt))
                 }
-                main.post {
-                    renderMessages(out)
-                    status.text = if (out.isEmpty()) "No messages yet." else "End-to-end encrypted conversation"
-                }
-            } catch (e: Exception) {
-                main.post { status.text = e.message ?: "Unable to fetch messages" }
-            }
-            main.postDelayed({ loadMessages(myId) }, 3000)
+                main.post { renderMessages(rows); chatStatus.text = if (rows.isEmpty()) "End-to-end encrypted • no messages yet" else "End-to-end encrypted"; scroll.post { scroll.fullScroll(View.FOCUS_DOWN) } }
+            } catch (e: Exception) { main.post { chatStatus.text = e.message ?: "Unable to load messages" } }
+            main.postDelayed({ loadMessages(myId, scroll) }, 3000)
         }
     }
 
-    private fun renderMessages(lines: List<String>) {
+    private fun renderMessages(rows: List<Triple<Boolean, String, String>>) {
         messagesBox.removeAllViews()
-        for (line in lines.takeLast(100)) {
-            messagesBox.addView(TextView(this).apply {
-                text = line
-                textSize = 16f
-                setPadding(10, 10, 10, 10)
-            })
+        if (rows.isEmpty()) { messagesBox.addView(text("Messages are encrypted on your device before they are sent.", 13f, MUTED).apply { gravity = Gravity.CENTER; setPadding(dp(28), dp(40), dp(28), dp(40) }); return }
+        rows.takeLast(100).forEach { (mine, body, time) ->
+            val line = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = if (mine) Gravity.END else Gravity.START }
+            val bubble = TextView(this).apply { text = body; textSize = 16f; setTextColor(if (mine) Color.WHITE else TEXT); setPadding(dp(14), dp(10), dp(14), dp(4)); background = rounded(if (mine) PRIMARY else Color.WHITE, 18, if (mine) 0 else 0xFFE0E5EC.toInt()) }
+            line.addView(bubble, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(36); rightMargin = dp(36); bottomMargin = dp(2) })
+            line.addView(text(time, 10f, MUTED).apply { setPadding(dp(8), 0, dp(8), dp(8)) }); messagesBox.addView(line, LinearLayout.LayoutParams(-1, -2))
         }
     }
 
-    private fun saveServer(url: String) {
-        getPreferences(Context.MODE_PRIVATE).edit().putString("server", url).apply()
-    }
+    private fun formatTime(value: String): String = try {
+        val input = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US); val date: Date = input.parse(value.take(19)) ?: return value.take(16).replace('T', ' '); SimpleDateFormat("HH:mm", Locale.getDefault()).format(date)
+    } catch (_: Exception) { value.take(16).replace('T', ' ') }
 
-    private fun getServerUrl(): String =
-        getPreferences(Context.MODE_PRIVATE).getString("server", DEFAULT_SERVER) ?: DEFAULT_SERVER
-
+    private fun saveServer(url: String) { getPreferences(Context.MODE_PRIVATE).edit().putString("server", url).apply() }
+    private fun getServerUrl(): String = getPreferences(Context.MODE_PRIVATE).getString("server", DEFAULT_SERVER) ?: DEFAULT_SERVER
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
 
-    override fun onDestroy() {
-        poll = false
-        executor.shutdownNow()
-        super.onDestroy()
-    }
+    override fun onDestroy() { poll = false; executor.shutdownNow(); super.onDestroy() }
 }
