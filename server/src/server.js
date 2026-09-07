@@ -19,6 +19,7 @@ function passwordDigest(passwordHash) { const salt = crypto.randomBytes(16); ret
 function passwordMatches(passwordHash, stored) { const [s, h] = String(stored).split('.'); if (!s || !h) return false; const actual = crypto.scryptSync(passwordHash, Buffer.from(s, 'base64'), 32), expected = Buffer.from(h, 'base64'); return expected.length === actual.length && crypto.timingSafeEqual(expected, actual); }
 function auth(request, reply) { const raw = String(request.headers.authorization || ''); const token = raw.startsWith('Bearer ') ? raw.slice(7) : ''; const id = sessions.get(token); if (!id) { reply.code(401).send({ error: 'login required' }); return null; } return id; }
 
+app.get('/', async () => ({ ok: true, service: 'simple-e2ee-chat', status: 'online' }));
 app.get('/health', async () => ({ ok: true, service: 'simple-e2ee-chat', users: Object.keys(db.users).length }));
 
 app.post('/v1/register', async (request, reply) => {
