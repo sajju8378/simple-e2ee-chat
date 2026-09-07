@@ -14,7 +14,7 @@ try { if (fs.existsSync(dataFile)) db = JSON.parse(fs.readFileSync(dataFile, 'ut
 const sessions = new Map();
 function save() { fs.writeFileSync(dataFile, JSON.stringify(db)); }
 function validId(id) { return typeof id === 'string' && /^E2E-[A-Z0-9]{8}$/.test(id); }
-function newId() { let id; do { id = `E2E-${crypto.randomBytes(8).toString('base64url').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8).padEnd(8, '0'); } while (db.users[id]); return id; }
+function newId() { let id; do { id = 'E2E-' + crypto.randomBytes(4).toString('hex').toUpperCase(); } while (db.users[id]); return id; }
 function passwordDigest(passwordHash) { const salt = crypto.randomBytes(16); return `${salt.toString('base64')}.${crypto.scryptSync(passwordHash, salt, 32).toString('base64')}`; }
 function passwordMatches(passwordHash, stored) { const [s, h] = String(stored).split('.'); if (!s || !h) return false; const actual = crypto.scryptSync(passwordHash, Buffer.from(s, 'base64'), 32), expected = Buffer.from(h, 'base64'); return expected.length === actual.length && crypto.timingSafeEqual(expected, actual); }
 function auth(request, reply) { const raw = String(request.headers.authorization || ''); const token = raw.startsWith('Bearer ') ? raw.slice(7) : ''; const id = sessions.get(token); if (!id) { reply.code(401).send({ error: 'login required' }); return null; } return id; }
