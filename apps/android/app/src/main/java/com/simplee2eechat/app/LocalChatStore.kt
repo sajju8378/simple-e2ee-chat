@@ -45,7 +45,23 @@ class LocalChatStore(context: Context) : SQLiteOpenHelper(context, "chat_history
         kg.init(KeyGenParameterSpec.Builder(KEY_ALIAS,KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).setKeySize(256).build())
         return kg.generateKey()
     }
-    private fun encrypt(value:String):String{val iv=ByteArray(12);java.security.SecureRandom().nextBytes(iv);val c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,key(),GCMParameterSpec(128,iv));val ct=c.doFinal(value.toByteArray(StandardCharsets.UTF_8));return Base64.encodeToString(iv,Base64.NO_WRAP)+":"+Base64.encodeToString(ct,Base64.NO_WRAP)}
-    private fun decrypt(value:String):String{try{val p=value.split(":",limit=2);val c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.DECRYPT_MODE,key(),GCMParameterSpec(128,Base64.decode(p[0],Base64.DEFAULT)));return String(c.doFinal(Base64.decode(p[1],Base64.DEFAULT)),StandardCharsets.UTF_8)}catch(_:Exception){return "[local message unavailable]"}}
+
+    // Android Keystore requires the provider to generate the GCM IV when randomized encryption is enabled.
+    // Store that generated IV beside the ciphertext; never supply our own IV during encryption.
+    private fun encrypt(value:String):String{
+        val c=Cipher.getInstance("AES/GCM/NoPadding")
+        c.init(Cipher.ENCRYPT_MODE,key())
+        val ct=c.doFinal(value.toByteArray(StandardCharsets.UTF_8))
+        return Base64.encodeToString(c.iv,Base64.NO_WRAP)+":"+Base64.encodeToString(ct,Base64.NO_WRAP)
+    }
+    private fun decrypt(value:String):String{
+        return try{
+            val p=value.split(":",limit=2)
+            if(p.size!=2) return "[local message unavailable]"
+            val c=Cipher.getInstance("AES/GCM/NoPadding")
+            c.init(Cipher.DECRYPT_MODE,key(),GCMParameterSpec(128,Base64.decode(p[0],Base64.DEFAULT)))
+            String(c.doFinal(Base64.decode(p[1],Base64.DEFAULT)),StandardCharsets.UTF_8)
+        }catch(_:Exception){"[local message unavailable]"}
+    }
     companion object{private const val KEY_ALIAS="simple_e2ee_chat_history_key"}
 }
