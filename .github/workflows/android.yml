@@ -3,7 +3,7 @@ name: Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, trail-attachments ]
 
 jobs:
   build:
@@ -27,7 +27,7 @@ jobs:
           for i in {1..30}; do curl --fail --silent http://127.0.0.1:8080/health && break || sleep 1; done
           curl --fail --silent http://127.0.0.1:8080/health | jq -e '.ok == true and .database == "sqlite"'
           A=$(curl --fail --silent --show-error -H 'Content-Type: application/json' -d '{"username":"alice_ci","displayName":"CI Alice","passwordHash":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","publicKey":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}' http://127.0.0.1:8080/v1/register)
-          B=$(curl --fail --silent --show-error -H 'Content-Type: application/json' -d '{"username":"bob_ci","displayName":"CI Bob","passwordHash":"CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC","publicKey":"CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"}' http://127.0.0.1:8080/v1/register)
+          B=$(curl --fail --silent --show-error -H 'Content-Type: application/json' -d '{"username":"bob_ci","displayName":"CI Bob","passwordHash":"CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC","publicKey":"CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"}' http://127.0.0.1:8080/v1/register)
           A_ID=$(echo "$A"|jq -r .id); A_TOKEN=$(echo "$A"|jq -r .token); B_ID=$(echo "$B"|jq -r .id); B_TOKEN=$(echo "$B"|jq -r .token)
           test "${A_ID#E2E-}" != "$A_ID"; test "${B_ID#E2E-}" != "$B_ID"; test "${#A_TOKEN}" -gt 20; test "${#B_TOKEN}" -gt 20
           curl --fail --silent -H "Authorization: Bearer $A_TOKEN" 'http://127.0.0.1:8080/v1/users/search?q=b' | jq -e '.users | length == 1 and .[0].username == "bob_ci"'
