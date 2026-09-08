@@ -90,7 +90,8 @@ class ChatActivity : Activity() {
                 api=ApiClient(server(),r.token)
                 main.post{showChats()}
             }catch(e:Exception){
-                main.post{showLogin(if(automatic)"Session needs attention: ${e.message?:"please sign in again"}" else (e.message?:"Login failed")))}
+                val msg=if(automatic) "Session needs attention: ${e.message ?: "please sign in again"}" else (e.message ?: "Login failed")
+                main.post{showLogin(msg)}
             }
         }
     }
@@ -277,7 +278,7 @@ class ChatActivity : Activity() {
             val c=api?:throw IllegalStateException("Please log in again");val u=c.getUser(peer)
             val payload=JSONObject().put("type","image").put("name",name).put("mime","image/jpeg").put("data",Base64.encodeToString(bytes,Base64.NO_WRAP)).toString()
             val id=c.sendMessage(peer,myId,Crypto.encrypt(payload,u.publicKey));history.upsert(id,peer,peerName,myId,System.currentTimeMillis(),payload)
-            main.post{Toast.makeText(this,"Photo sent",Toast.LENGTH_SHORT).show();val root=findViewById<LinearLayout>(android.R.id.content)?.getChildAt(0) as? View;root?.let{};showChat()}
+            main.post{Toast.makeText(this,"Photo sent",Toast.LENGTH_SHORT).show();showChat()}
         }catch(e:Exception){main.post{Toast.makeText(this,e.message?:"Photo send failed",Toast.LENGTH_SHORT).show()}}}
     }
 
@@ -305,11 +306,7 @@ class ChatActivity : Activity() {
             try{
                 val c=api?:return@execute;val key=store.privateKeyBlob()?:return@execute;val remote=c.conversation(peer)
                 remote.forEach{m->
-                    if(m.from==myId){
-                        // The sender's envelope is encrypted to the recipient, so the sender cannot decrypt it.
-                        // The local plaintext copy is already stored at send time.
-                        return@forEach
-                    }
+                    if(m.from==myId)return@forEach
                     try{val plain=Crypto.decrypt(m.envelope,key);val at=try{Instant.parse(m.createdAt).toEpochMilli()}catch(_:Exception){System.currentTimeMillis()};history.upsert(m.id,peer,peerName,m.from,at,plain)}catch(_:Exception){}
                 }
                 main.post{if(screen==Screen.CHAT){renderLocal(msgs,scroll);main.postDelayed({if(polling)syncMessages(msgs,scroll)},3000)}}
