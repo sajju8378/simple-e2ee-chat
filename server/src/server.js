@@ -1,1 +1,34 @@
-// USER SEARCH API PATCH
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+const app=Fastify({logger:true}); await app.register(cors,{origin:true});
+const dataDir=path.resolve(process.env.DATA_DIR||'./data'); fs.mkdirSync(dataDir,{recursive:true});
+const db=new DatabaseSync(path.join(dataDir,'chat.sqlite'));
+db.exec(`PRAGMA journal_mode=WAL;
+CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE,display_name TEXT NOT NULL,password TEXT NOT NULL,public_key TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,sender_id TEXT NOT NULL REFERENCES users(id),recipient_id TEXT NOT NULL REFERENCES users(id),envelope TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_users_name ON users(display_name); CREATE INDEX IF NOT EXISTS idx_messages_pair ON messages(sender_id,recipient_id,created_at); CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);`);
+try{if(!db.prepare('PRAGMA table_info(users)').all().some(x=>x.name==='username'))db.exec('ALTER TABLE users ADD COLUMN username TEXT')}catch{}
+const legacyFile=path.join(dataDir,'store.json');
+if(fs.existsSync(legacyFile))try{const l=JSON.parse(fs.readFileSync(legacyFile,'utf8'));const u=db.prepare('INSERT OR IGNORE INTO users(id,username,display_name,password,public_key,created_at) VALUES(?,?,?,?,?,?)');for(const x of Object.values(l.users||{}))u.run(x.id,x.id.toLowerCase(),x.displayName,x.password,x.publicKey,x.createdAt||new Date().toISOString());const m=db.prepare('INSERT OR IGNORE INTO messages(id,sender_id,recipient_id,envelope,created_at) VALUES(?,?,?,?,?)');for(const x of l.messages||[])m.run(x.id,x.from,x.to,JSON.stringify(x.envelope),x.createdAt||new Date().toISOString())}catch(e){app.log.warn({err:e},'Legacy migration skipped')}
+function validUsername(v){return typeof v==='string'&&/^[A-Za-z][A-Za-z0-9_]{2,19}$/.test(v)}
+function findUser(key){const q=String(key||'').trim();return db.prepare('SELECT id,username,display_name,password,public_key FROM users WHERE id=? OR username=? COLLATE NOCASE').get(q.toUpperCase(),q)}
+function digest(v){const s=crypto.randomBytes(16);return `${s.toString('base64')}.${crypto.scryptSync(v,s,32).toString('base64')}`}
+function matches(v,stored){const[a,b]=String(stored).split('.');if(!a||!b)return false;const x=crypto.scryptSync(v,Buffer.from(a,'base64'),32),y=Buffer.from(b,'base64');return x.length===y.length&&crypto.timingSafeEqual(x,y)}
+function session(uid){const t=crypto.randomBytes(32).toString('base64url');db.prepare('INSERT INTO sessions(token,user_id,created_at) VALUES(?,?,?)').run(t,uid,new Date().toISOString());return t}
+function auth(req,reply){const h=String(req.headers.authorization||''),t=h.startsWith('Bearer ')?h.slice(7):'',r=t?db.prepare('SELECT user_id FROM sessions WHERE token=?').get(t):null;if(!r){reply.code(401).send({error:'login required'});return null}return r.user_id}
+function pub(u){return{id:u.id,username:u.username,displayName:u.display_name,publicKey:u.public_key}}
+app.get('/',async()=>({ok:true,service:'simple-e2ee-chat',status:'online'}));
+app.get('/health',async()=>({ok:true,service:'simple-e2ee-chat',users:db.prepare('SELECT COUNT(*) count FROM users').get().count,messages:db.prepare('SELECT COUNT(*) count FROM messages').get().count,database:'sqlite'}));
+app.post('/v1/register',async(req,reply)=>{const{username,displayName,passwordHash,publicKey}=req.body??{};if(!validUsername(username))return reply.code(400).send({error:'ID must be 3-20 characters, start with a letter, and use only letters, numbers or _'});if(typeof displayName!=='string'||!displayName.trim()||displayName.length>80)return reply.code(400).send({error:'display name is required'});if(typeof passwordHash!=='string'||passwordHash.length<40||passwordHash.length>200)return reply.code(400).send({error:'invalid password'});if(typeof publicKey!=='string'||publicKey.length<100||publicKey.length>10000)return reply.code(400).send({error:'public key is required'});if(db.prepare('SELECT 1 FROM users WHERE username=? COLLATE NOCASE').get(username))return reply.code(409).send({error:'That ID is already taken'});let id;do{id='E2E-'+crypto.randomBytes(4).toString('hex').toUpperCase()}while(db.prepare('SELECT 1 FROM users WHERE id=?').get(id));db.prepare('INSERT INTO users(id,username,display_name,password,public_key,created_at) VALUES(?,?,?,?,?,?)').run(id,username,displayName.trim(),digest(passwordHash),publicKey,new Date().toISOString());return reply.code(201).send({id,username,token:session(id),publicKey,displayName:displayName.trim()})});
+app.post('/v1/login',async(req,reply)=>{const{id,passwordHash}=req.body??{},u=findUser(id);if(!u||typeof passwordHash!=='string'||!matches(passwordHash,u.password))return reply.code(401).send({error:'invalid ID or password'});return{id:u.id,username:u.username,token:session(u.id),publicKey:u.public_key,displayName:u.display_name}});
+app.post('/v1/logout',async(req,reply)=>{if(!auth(req,reply))return;db.prepare('DELETE FROM sessions WHERE token=?').run(String(req.headers.authorization||'').slice(7));return{ok:true}});
+app.get('/v1/users/search',async(req,reply)=>{const me=auth(req,reply);if(!me)return;const q=String(req.query?.q||'').trim();if(!q)return{users:[]};const like=q.replace(/[%_]/g,'\\$&')+'%';const rows=db.prepare(`SELECT id,username,display_name,public_key FROM users WHERE id!=? AND (username LIKE ? COLLATE NOCASE ESCAPE '\\' OR display_name LIKE ? COLLATE NOCASE ESCAPE '\\') ORDER BY display_name COLLATE NOCASE LIMIT 8`).all(me,like,like);return{users:rows.map(pub)}});
+app.get('/v1/users/:id',async(req,reply)=>{if(!auth(req,reply))return;const u=findUser(req.params.id);if(!u)return reply.code(404).send({error:'user not found'});return pub(u)});
+app.post('/v1/messages',async(req,reply)=>{const me=auth(req,reply);if(!me)return;const{to,from,envelope}=req.body??{},u=findUser(to);if(from!==me||!u||!envelope||typeof envelope!=='object')return reply.code(400).send({error:'invalid encrypted message'});const id=crypto.randomUUID();db.prepare('INSERT INTO messages(id,sender_id,recipient_id,envelope,created_at) VALUES(?,?,?,?,?)').run(id,me,u.id,JSON.stringify(envelope),new Date().toISOString());return reply.code(201).send({id,accepted:true})});
+app.get('/v1/conversations/:peer',async(req,reply)=>{const me=auth(req,reply);if(!me)return;const p=findUser(req.params.peer);if(!p)return reply.code(404).send({error:'user not found'});const rows=db.prepare(`SELECT id,sender_id "from",recipient_id "to",envelope,created_at "createdAt" FROM messages WHERE(sender_id=? AND recipient_id=?)OR(sender_id=? AND recipient_id=?) ORDER BY created_at ASC`).all(me,p.id,p.id,me);return{messages:rows.map(r=>({...r,envelope:JSON.parse(r.envelope)}))}});
+await app.listen({host:'0.0.0.0',port:Number(process.env.PORT||8080)});
