@@ -21,7 +21,7 @@ jobs:
         working-directory: server
         run: npm install
 
-      - name: Backend health and registration smoke test
+      - name: Backend health and real message smoke test
         working-directory: server
         run: |
           node src/server.js > /tmp/simple-e2ee-server.log 2>&1 &
@@ -35,15 +35,38 @@ jobs:
             sleep 1
           done
           HEALTH=$(curl --fail --silent http://127.0.0.1:8080/health)
-          echo "$HEALTH" | jq -e '.ok == true and .service == "simple-e2ee-chat"'
-          REGISTER=$(curl --fail --silent --show-error \
-            -H 'Content-Type: application/json' \
-            -d '{"displayName":"CI Test","passwordHash":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","publicKey":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}' \
+          echo "$HEALTH" | jq -e '.ok == true and .service == "simple-e2ee-chat" and .database == "sqlite"'
+
+          A=$(curl --fail --silent --show-error -H 'Content-Type: application/json' \
+            -d '{"displayName":"CI Alice","passwordHash":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","publicKey":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}' \
             http://127.0.0.1:8080/v1/register)
-          echo "$REGISTER" | jq -e '.id | startswith("E2E-")'
-          echo "$REGISTER" | jq -e '.token | length > 20'
-          echo "$REGISTER" | jq -e '.publicKey | length >= 100'
-          echo "$REGISTER" | jq -e '.displayName == "CI Test"'
+          B=$(curl --fail --silent --show-error -H 'Content-Type: application/json' \
+            -d '{"displayName":"CI Bob","passwordHash":"CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC","publicKey":"CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"}' \
+            http://127.0.0.1:8080/v1/register)
+
+          A_ID=$(echo "$A" | jq -r '.id')
+          A_TOKEN=$(echo "$A" | jq -r '.token')
+          B_ID=$(echo "$B" | jq -r '.id')
+          B_TOKEN=$(echo "$B" | jq -r '.token')
+          test "${A_ID#E2E-}" != "$A_ID"
+          test "${B_ID#E2E-}" != "$B_ID"
+          test "${#A_TOKEN}" -gt 20
+          test "${#B_TOKEN}" -gt 20
+
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $A_TOKEN" \
+            http://127.0.0.1:8080/v1/users/$B_ID | jq -e '.displayName == "CI Bob"'
+
+          SENT=$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $A_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d "{\"to\":\"$B_ID\",\"from\":\"$A_ID\",\"envelope\":{\"ciphertext\":\"ci-test-ciphertext\",\"iv\":\"ci-test-iv\"}}" \
+            http://127.0.0.1:8080/v1/messages)
+          echo "$SENT" | jq -e '.accepted == true'
+
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $B_TOKEN" \
+            http://127.0.0.1:8080/v1/conversations/$A_ID | jq -e '.messages | length == 1 and .[0].envelope.ciphertext == "ci-test-ciphertext"'
 
       - name: Set up JDK
         uses: actions/setup-java@v4
