@@ -13,8 +13,8 @@ class ApiClient(private val baseUrl:String,private val token:String){
  fun searchUsers(q:String):List<User>{val a=request("GET","/v1/users/search?q="+java.net.URLEncoder.encode(q,"UTF-8"),null).getJSONArray("users");return (0 until a.length()).map{val x=a.getJSONObject(it);User(x.getString("id"),x.optString("username",""),x.optString("displayName","Friend"),x.getString("publicKey"))}}
  fun sendMessage(to:String,from:String,envelope:Map<String,Any>):String{val e=JSONObject();envelope.forEach{(k,v)->e.put(k,v)};return request("POST","/v1/messages",JSONObject().put("to",to).put("from",from).put("envelope",e)).getString("id")}
  fun conversation(peer:String):List<Message>{val a=request("GET","/v1/conversations/$peer",null).getJSONArray("messages");return (0 until a.length()).map{val m=a.getJSONObject(it);val e=m.getJSONObject("envelope");val map=mutableMapOf<String,Any?>();val k=e.keys();while(k.hasNext()){val z=k.next();map[z]=e.get(z)};Message(m.getString("id"),m.getString("from"),m.getString("to"),map,m.getString("createdAt"),m.optString("status","sent"))}}
- fun markDelivered(peer:String){request("POST","/v1/conversations/$peer/delivered",JSONObject())}
- fun markRead(peer:String){request("POST","/v1/conversations/$peer/read",JSONObject())}
+ fun markDelivered(ids:List<String>){if(ids.isNotEmpty())request("POST","/v1/messages/delivered",JSONObject().put("ids",org.json.JSONArray(ids)))}
+ fun markRead(ids:List<String>){if(ids.isNotEmpty())request("POST","/v1/messages/read",JSONObject().put("ids",org.json.JSONArray(ids)))}
  fun uploadKeyBackup(keyBackup:String){request("POST","/v1/account/backup",JSONObject().put("keyBackup",keyBackup))}
  fun rotateDeviceKey(publicKey:String,keyBackup:String){request("POST","/v1/account/rotate-key",JSONObject().put("publicKey",publicKey).put("keyBackup",keyBackup))}
  fun logout(){request("POST","/v1/logout",null)}
