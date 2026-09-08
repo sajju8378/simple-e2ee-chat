@@ -53,13 +53,28 @@ class ChatActivity : Activity() {
         executor.execute{try{
             val r=ApiClient.login(server(),id.trim(),pw)
             var privateKey=store.savedPrivateKey(r.id)
+            var rebuiltLegacyKey=false
             if(privateKey.isNullOrBlank() && r.keyBackup.isNotBlank()) privateKey=Crypto.decryptPrivateKeyBackup(r.keyBackup,pw)
-            if(privateKey.isNullOrBlank()) throw IllegalStateException("This account has no recoverable encrypted key backup. It can only be used on the phone where its private key was originally created.")
-            store.activateSavedAccount(r.id,r.token,r.publicKey,r.displayName,pw,privateKey)
             val c=ApiClient(server(),r.token)
-            if(r.keyBackup.isBlank()) try{c.uploadKeyBackup(Crypto.encryptPrivateKeyBackup(privateKey,pw))}catch(_:Exception){}
+            if(privateKey.isNullOrBlank()){
+                // Accounts created by the original APK never had a recoverable private-key backup.
+                // The password still authenticates the account, so create a fresh device key and
+                // replace the server public key. This keeps the account/username usable instead of
+                // trapping the user on the login screen. Messages encrypted to the retired key
+                // remain on the server but cannot be decrypted without that old private key.
+                val k=Crypto.generateKeyPair()
+                c.rotateDeviceKey(k.publicKey,Crypto.encryptPrivateKeyBackup(k.privateKey,pw))
+                privateKey=k.privateKey
+                rebuiltLegacyKey=true
+            } else if(r.keyBackup.isBlank()) try{c.uploadKeyBackup(Crypto.encryptPrivateKeyBackup(privateKey,pw))}catch(_:Exception){}
+            store.activateSavedAccount(r.id,r.token,r.publicKey,pw.ifBlank{r.displayName},pw,privateKey)
+            // Store the actual current public key when a legacy key was rebuilt.
+            if(rebuiltLegacyKey){
+                val current=c.getUser(r.id)
+                store.activateSavedAccount(r.id,r.token,current.publicKey,r.displayName,pw,privateKey)
+            } else store.activateSavedAccount(r.id,r.token,r.publicKey,r.displayName,pw,privateKey)
             myId=r.id;myName=r.displayName;myUsername=r.username;api=c
-            main.post{showChats()}
+            main.post{showChats();if(rebuiltLegacyKey)Toast.makeText(this,"Account recovered with a new device key. Old messages encrypted to the previous key cannot be opened.",Toast.LENGTH_LONG).show()}
         }catch(e:Exception){main.post{showLogin(if(automatic)"Session needs attention: ${e.message?:"please sign in again"}" else e.message?:"Login failed")}}}
     }
 
