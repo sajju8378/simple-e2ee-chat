@@ -17,7 +17,15 @@ class SecureStore(private val context: Context) {
     init { ensureKey() }
 
     fun saveAccount(id: String, token: String, privateKey: String, publicKey: String, displayName: String, password: String) {
+        // Keep a per-account encrypted copy so logging out and signing into another
+        // account on the same phone never mixes the two private keys.
+        val prefix = accountPrefix(id)
         prefs.edit()
+            .putString("${prefix}token", token)
+            .putString("${prefix}public", publicKey)
+            .putString("${prefix}name", displayName)
+            .putString("${prefix}password", encrypt(password))
+            .putString("${prefix}private", encrypt(privateKey))
             .putString("id", id)
             .putString("token", token)
             .putString("public", publicKey)
@@ -33,7 +41,39 @@ class SecureStore(private val context: Context) {
     fun password(): String? = prefs.getString("password", null)?.let { decrypt(it) }
     fun privateKeyBlob(): String? = prefs.getString("private", null)?.let { decrypt(it) }
 
+    fun savedPrivateKey(id: String): String? {
+        val direct = prefs.getString("${accountPrefix(id)}private", null)?.let { decrypt(it) }
+        if (!direct.isNullOrBlank()) return direct
+        // Migrate the account that was stored by older APKs before multi-account support.
+        if (prefs.getString("id", null).equals(id, ignoreCase = true)) return privateKeyBlob()
+        return null
+    }
+
+    fun activateSavedAccount(id: String, token: String, publicKey: String, displayName: String, password: String, privateKey: String) {
+        val prefix = accountPrefix(id)
+        prefs.edit()
+            .putString("${prefix}token", token)
+            .putString("${prefix}public", publicKey)
+            .putString("${prefix}name", displayName)
+            .putString("${prefix}password", encrypt(password))
+            .putString("${prefix}private", encrypt(privateKey))
+            .putString("id", id)
+            .putString("token", token)
+            .putString("public", publicKey)
+            .putString("name", displayName)
+            .putString("password", encrypt(password))
+            .putString("private", encrypt(privateKey))
+            .apply()
+    }
+
+    // Logout removes only the active account/session. Saved encrypted account keys remain
+    // on the phone so the user can sign back into an account created on this device.
+    fun logout() { prefs.edit().remove("id").remove("token").remove("public").remove("name").remove("password").remove("private").apply() }
+
+    // Retained for callers that explicitly want to erase every local account.
     fun clear() { prefs.edit().clear().apply() }
+
+    private fun accountPrefix(id: String): String = "account_${Base64.encodeToString(id.trim().uppercase().toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP)}_"
 
     private fun ensureKey() {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
